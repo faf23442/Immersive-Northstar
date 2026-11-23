@@ -1,0 +1,43 @@
+package com.lightning.northstar.block.tech.rocket_controls;
+
+import org.joml.Quaternionf;
+
+import com.jozufozu.flywheel.api.MaterialManager;
+import com.jozufozu.flywheel.api.instance.DynamicInstance;
+import com.jozufozu.flywheel.backend.instancing.blockentity.BlockEntityInstance;
+import dev.engine_room.flywheel.lib.material.Materials;
+import com.jozufozu.flywheel.core.materials.oriented.OrientedData;
+import com.lightning.northstar.block.tech.NorthstarPartialModels;
+import com.mojang.math.Axis;
+import net.createmod.catnip.math.AngleHelper;
+
+public class RocketControlsInstance extends BlockEntityInstance<RocketControlsBlockEntity> implements DynamicInstance {
+
+	private final OrientedData lever;
+	
+	public RocketControlsInstance(MaterialManager materialManager, RocketControlsBlockEntity blockEntity) {
+		super(materialManager, blockEntity);
+		Quaternionf q = Axis.YP.rotationDegrees(AngleHelper.horizontalAngle(blockState.getValue(RocketControlsBlock.FACING)));
+		lever = materialManager.defaultSolid()
+				.material(Materials.ORIENTED)
+				.getModel(NorthstarPartialModels.CONTROL_LEVER_BLOCK, blockState)
+				.createInstance();
+		lever.setRotation(q);
+	}	
+	@Override
+	public void beginFrame() {
+		lever.setPosition(getInstancePosition());
+	}
+	
+	@Override
+	public void updateLight() {
+		super.updateLight();
+		relight(pos, lever);
+	}
+
+	@Override
+	protected void remove() {
+		lever.delete();
+	}
+	
+}
