@@ -31,6 +31,11 @@ public class RocketControlsMovementBehaviour  implements MovementBehaviour{
 		return null;
 	}
 	
+    @Override
+    public boolean disableBlockEntityRendering() {
+        return true;
+    }
+
 	@Override
 	public void stopMoving(MovementContext context) {
 		context.contraption.entity.stopControlling(context.localPos);

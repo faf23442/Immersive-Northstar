@@ -46,6 +46,7 @@ public class RocketControlsRenderer extends SafeBlockEntityRenderer<RocketContro
 					.translate(0, -2 / 16f, -3 / 16f);
 				lever.transform(ms)
 					.light(LevelRenderer.getLightColor(renderWorld, context.localPos))
+					.useLevelLight(context.world, matrices.getWorld())
 					.renderInto(matrices.getViewProjection(), buffer.getBuffer(RenderType.solid()));
 				ms.popPose();
 
@@ -54,27 +55,7 @@ public class RocketControlsRenderer extends SafeBlockEntityRenderer<RocketContro
 	@Override
 	protected void renderSafe(RocketControlsBlockEntity be, float partialTicks, PoseStack ms,
 			MultiBufferSource bufferSource, int light, int overlay) {
-		BlockState state = be.getBlockState();
-		Direction facing = state.getValue(RocketControlsBlock.FACING);
-		
-		float hAngle = 180 + AngleHelper.horizontalAngle(facing);
-		double yOffset = Mth.lerp(1 * 1, -0.15f, 0.05f);
-
-			float vAngle = (float) Mth.clamp(1 * 70 - 25, -60, 60);
-			SuperByteBuffer lever = CachedBuffers.partial(NorthstarPartialModels.CONTROL_LEVER, state);
-			ms.pushPose();
-			TransformStack.of(ms)
-				.center()
-				.rotateYDegrees(hAngle)
-				.translate(0, 0, 4 / 16f)
-				.rotateXDegrees(vAngle - 60)
-				.translate(0, yOffset, 0)
-				.rotateXDegrees(60)
-				.uncenter()
-				.translate(0, -2 / 16f, -3 / 16f);
-			lever.transform(ms);
-			ms.popPose();
-
-	}
+        com.lightning.northstar.client.NorthstarMachineRenderer.renderParts(be, partialTicks, ms, bufferSource, light);
+    }
 
 }

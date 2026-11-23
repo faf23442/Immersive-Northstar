@@ -109,13 +109,13 @@ public class NorthstarRegistrate extends AbstractRegistrate<NorthstarRegistrate>
 		return entry(name,
 			c -> new VirtualFluidBuilder<VirtualFluid, NorthstarRegistrate>(self(), self(), name, c,
 				Create.asResource("fluid/" + name + "_still"), Create.asResource("fluid/" + name + "_flow"),
-				CreateRegistrate::defaultFluidType, VirtualFluid::createFlowing, VirtualFluid::createSource));
+				CreateRegistrate::defaultFluidType, VirtualFluid::createSource, VirtualFluid::createFlowing));
 	}
 
 	public FluidBuilder<VirtualFluid, NorthstarRegistrate> virtualFluid(String name, ResourceLocation still,
 		ResourceLocation flow) {
 		return entry(name, c -> new VirtualFluidBuilder<>(self(), self(), name, c, still, flow,
-			CreateRegistrate::defaultFluidType, VirtualFluid::createFlowing, VirtualFluid::createSource));
+			CreateRegistrate::defaultFluidType, VirtualFluid::createSource, VirtualFluid::createFlowing));
 	}
 
 	public FluidBuilder<ForgeFlowingFluid.Flowing, NorthstarRegistrate> standardFluid(String name) {

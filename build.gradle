@@ -29,6 +29,14 @@ base {
 // Mojang ships Java 17 to end users in 1.18+, so your mod should target Java 17.
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
+// Runtime regression tests are loaded only by runGameTestServer, never by the release jar.
+sourceSets {
+    gameTest {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
 println "Java: ${System.getProperty 'java.version'}, JVM: ${System.getProperty 'java.vm.version'} (${System.getProperty 'java.vendor'}), Arch: ${System.getProperty 'os.arch'}"
 minecraft {
     // The mappings can be changed at any time and must be in the following format.
@@ -96,6 +104,14 @@ minecraft {
         }
 
         client {
+            if (providers.gradleProperty('visualRocket').isPresent()) {
+                property 'northstar.visualRocketTest', 'true'
+            }
+            if (providers.gradleProperty('gameTests').isPresent()) {
+                mods {
+                    "${mod_id}" { source sourceSets.gameTest }
+                }
+            }
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             property 'forge.logging.console.level', 'debug'
             property 'mixin.env.remapRefMap', 'true'
@@ -120,13 +136,20 @@ minecraft {
         // By default, the server will crash when no gametests are provided.
         // The gametest system is also enabled by default for other run configs under the /test command.
         gameTestServer {
-            workingDirectory project.file('run')
+            workingDirectory project.file('run-gametest')
 
             property 'forge.logging.markers', 'REGISTRIES'
 
             property 'forge.logging.console.level', 'debug'
 
             property 'forge.enabledGameTestNamespaces', 'northstar'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods {
+                "${mod_id}" {
+                    source sourceSets.gameTest
+                }
+            }
         }
 
         data {
@@ -147,32 +170,48 @@ minecraft {
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
+    if (providers.gradleProperty('compatMods').isPresent()) {
+        maven {
+            name = 'Modrinth compatibility test dependencies'
+            url = 'https://api.modrinth.com/maven'
+            content { includeGroup 'maven.modrinth' }
+        }
+    }
     // Put repositories for dependencies here
     // ForgeGradle automatically adds the Forge maven and Maven Central for you
 
     maven {
         name = 'Create/Ponder/Flywheel maven'
         url = 'https://maven.createmod.net'
+        content {
+            includeGroup 'com.simibubi.create'
+            includeGroup 'net.createmod.ponder'
+            includeGroup 'dev.engine-room.flywheel'
+        }
     }
     maven {
         name = 'tterrag maven'
         url = 'https://maven.tterrag.com/'
+        content { includeGroup 'com.tterrag.registrate' }
     }
     
     maven {
     // location of the maven that hosts JEI files before January 2023
  	   name = "Progwml6's maven"
  	   url = "https://dvs1.progwml6.com/files/maven/"
+     content { includeGroup "mezz.jei" }
  	 }
   	maven {
  	   // location of the maven that hosts JEI files since January 2023
  	   name = "Jared's maven"
  	   url = "https://maven.blamejared.com/"
+     content { includeGroup "mezz.jei" }
  	 }
  	 maven {
     // location of a maven mirror for JEI files, as a fallback
  	   name = "ModMaven"
  	   url = "https://modmaven.dev"
+     content { includeGroup "mezz.jei" }
  	 }
 	maven {
         name = 'GeckoLib'
@@ -204,6 +243,11 @@ dependencies {
     implementation fg.deobf("net.createmod.ponder:Ponder-Forge-${minecraft_version}:${ponder_version}")
     compileOnly fg.deobf("dev.engine-room.flywheel:flywheel-forge-api-${flywheel_minecraft_version}:${flywheel_version}")
     runtimeOnly fg.deobf("dev.engine-room.flywheel:flywheel-forge-${flywheel_minecraft_version}:${flywheel_version}")
+    // Create's slim development jar omits its bundled MixinExtras dependency.
+    runtimeOnly "io.github.llamalad7:mixinextras-forge:${mixin_extras_version}"
+    if (providers.gradleProperty('compatMods').isPresent()) {
+        runtimeOnly fg.deobf('maven.modrinth:immersiveengineering:10.2.0-183')
+    }
     implementation fg.deobf("com.tterrag.registrate:Registrate:${registrate_version}")
     
     compileOnly(fg.deobf("mezz.jei:jei-${mc_version}-common-api:${jei_version}"))
@@ -237,6 +281,13 @@ dependencies {
 
 
 // Example for how to get properties into the manifest for reading at runtime.
+tasks.named('processResources', ProcessResources).configure {
+    inputs.property 'mod_version', project.version
+    filesMatching('META-INF/mods.toml') {
+        expand mod_version: project.version
+    }
+}
+
 tasks.named('jar', Jar).configure {
     manifest {
         attributes([

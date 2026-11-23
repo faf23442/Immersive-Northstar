@@ -26,6 +26,7 @@ public class NorthstarPartialModels {
 	CIRCUIT_ENGRAVER_HEAD = block("circuit_engraver/head"),
 	CIRCUIT_ENGRAVER_LASER = block("circuit_engraver/laser"),
 	HALF_SHAFT = block("half_shaft"),
+	IRON_COGWHEEL = block("iron_cogwheel"),
 	OXYGEN_CONCENTATOR_FAN = block("oxygen_concentrator/fan"),
 	WARM_SPINNY = block("temperature_regulator/warm_spinny"),
 	COLD_SPINNY = block("temperature_regulator/cold_spinny"),

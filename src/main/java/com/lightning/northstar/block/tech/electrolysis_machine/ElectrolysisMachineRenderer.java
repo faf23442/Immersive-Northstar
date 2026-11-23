@@ -5,6 +5,8 @@ import com.simibubi.create.foundation.blockEntity.behaviour.fluid.SmartFluidTank
 import com.simibubi.create.foundation.blockEntity.behaviour.fluid.SmartFluidTankBehaviour.TankSegment;
 import com.simibubi.create.foundation.blockEntity.renderer.SmartBlockEntityRenderer;
 import com.lightning.northstar.client.NorthstarFluidRenderer;
+import com.lightning.northstar.client.NorthstarMachineRenderer;
+import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider.Context;
@@ -21,7 +23,9 @@ public class ElectrolysisMachineRenderer extends SmartBlockEntityRenderer<Electr
 	protected void renderSafe(ElectrolysisMachineBlockEntity elecMac, float partialTicks, PoseStack ms, MultiBufferSource buffer,
 		int light, int overlay) {
 		super.renderSafe(elecMac, partialTicks, ms, buffer, light, overlay);
-		renderFluids(elecMac, partialTicks, ms, buffer, light, overlay);
+		if (!VisualizationManager.supportsVisualization(elecMac.getLevel()))
+            NorthstarMachineRenderer.renderShafts(elecMac, ms, buffer, light);
+        renderFluids(elecMac, partialTicks, ms, buffer, light, overlay);
 	}
 	
 	protected float renderFluids(ElectrolysisMachineBlockEntity elecMac, float partialTicks, PoseStack ms, MultiBufferSource buffer,
