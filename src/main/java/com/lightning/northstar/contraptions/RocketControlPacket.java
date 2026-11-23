@@ -34,7 +34,7 @@ public class RocketControlPacket extends SimplePacketBase {
 
 	@Override
 	public boolean handle(Context context) {
-		RocketHandler.CONTROL_QUEUE.put(Pair.of(playerID, localControlsPos), rce);
+		context.enqueueWork(() -> RocketHandler.CONTROL_QUEUE.put(Pair.of(playerID, localControlsPos), rce));
 		return true;
 	}
 

@@ -64,7 +64,7 @@ import net.minecraftforge.items.ItemStackHandler;
 import net.minecraftforge.items.wrapper.CombinedInvWrapper;
 
 public class RocketStationBlockEntity extends SmartBlockEntity implements IDisplayAssemblyExceptions, IControlContraption, MenuProvider {
-	
+
 	boolean assembleNextTick;
 	public Player owner;
 	protected AssemblyException lastException;
@@ -72,7 +72,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 	protected ItemStackHandler inventory;
 	protected LazyOptional<IItemHandlerModifiable> itemCapability;
 	public String name = "Bing Bong's Big Bonanza";
-	
+
 	protected int failedCarriageIndex;
 	Direction assemblyDirection;
 	int assemblyLength;
@@ -80,7 +80,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 	AbstractBogeyBlock<?>[] bogeyTypes;
 	boolean[] upsideDownBogeys;
 	int bogeyCount;
-	
+
 	public float offset;
 	public int fuelCost;
 	public int fuelReturnCost;
@@ -91,18 +91,18 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 	protected ScrollOptionBehaviour<MovementMode> movementMode;
 	protected boolean waitingForSpeedChange;
 	protected double sequencedOffsetLimit;
-	
-	
+
+
 	int i = 0;
 
 	// Custom position sync
 	protected float clientOffsetDiff;
 	public ResourceKey<Level> target;
-	
-	
+
+
 	public final Container container = new SimpleContainer(1) {};
-	
-	
+
+
 	public static WorldAttached<Map<BlockPos, BoundingBox>> assemblyAreas = new WorldAttached<>(w -> new HashMap<>());
 
 	public RocketStationBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
@@ -110,12 +110,12 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 		inventory = new ItemStackHandler();
 		itemCapability = LazyOptional.of(() -> new CombinedInvWrapper(inventory));
 	}
-	
+
 	@Override
 	public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
 		registerAwardables(behaviours, AllAdvancements.CONTRAPTION_ACTORS);
 	}
-	
+
 	@Override
 	public void initialize() {
 		super.initialize();
@@ -127,15 +127,15 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 		owner = player;
 		assembleNextTick = true;
 	}
-	
-	
+
+
 	public void enterAssembly() {
 		assembleNextTick = true;
 	}
 	public void exitAssembly() {
 		assembleNextTick = false;
 	}
-	
+
 	@Override
 	public void tick() {
 		super.tick();
@@ -149,17 +149,17 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 			assembleNextTick = true;
 		}
 		fuelCost = fuelCalc();
-		fuelReturnCost = fuelReturnCalc();		
-		
+		fuelReturnCost = fuelReturnCalc();
+
 		if (assembleNextTick == true) {
 			level.setBlock(worldPosition, getBlockState().setValue(RocketStationBlock.ASSEMBLING, false), assemblyLength);
 			tryAssemble();
 			assembleNextTick = false;
 		}
 	}
-	
-	
-	
+
+
+
 	private void tryAssemble() {
 		BlockState blockState = getBlockState();
 		if (!(blockState.getBlock() instanceof RocketStationBlock))
@@ -171,7 +171,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 		if (!(blockEntity instanceof RocketStationBlockEntity))
 			{return; }
 		Direction movementDirection = Direction.UP;
-		
+
 		int engines = 0;
 		boolean hasStation = false;
 		boolean hasFuel = false;
@@ -183,7 +183,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 		try {
 			lastException = null;
 			if (!contraption.assemble(level, worldPosition))
-				{return;} 
+				{return;}
 			engines = contraption.hasJetEngine();
 			hasFuel = contraption.hasFuel();
 			fuelAmount = contraption.fuelAmount();
@@ -206,7 +206,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 			owner.displayClientMessage(Component.translatable("northstar.gui.rocket_too_big").withStyle(ChatFormatting.RED), false);
 			owner.displayClientMessage(Component.translatable("northstar.gui.current_config_size").withStyle(ChatFormatting.RED), false);
 			owner.displayClientMessage(Component.literal(AllConfigs.server().kinetics.maxBlocksMoved.get().toString()).withStyle(ChatFormatting.RED), false);
-	
+
 			lastException = e;
 			sendData();
 			return;
@@ -219,12 +219,12 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 				contraption.owner.displayClientMessage(Component.literal
 						("Something's blocking your rocket! Make sure everything is glued together!").withStyle(ChatFormatting.RED), false);
 			}return;}else {System.out.println("Obamna");}
-		
+
 		Set<BlockPos> oxyCheck = new HashSet<BlockPos>();
 		boolean oxygenSealed = true;
 		if(!oxyCheck.contains(this.getBlockPos().above()))
 			oxyCheck.add(this.getBlockPos().above());
-		if(oxyCheck.size() < OxygenStuff.maximumOxy) {		  
+		if(oxyCheck.size() < OxygenStuff.maximumOxy) {
 			OxygenStuff.spreadOxy(this.level, oxyCheck, OxygenStuff.maximumOxy);
 			System.out.println(oxyCheck.size());
 		}
@@ -237,13 +237,13 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 				interplanetaryFlag = false;
 			}
 		}
-		
+
 		if(interplanetaryFlag) {
 			contraption.owner.displayClientMessage(Component.literal
 			("Interplanetary travel requires a Interplanetary Navigator!").withStyle(ChatFormatting.RED), false);
 		}
-		
-		if (engines >= requiredJets && hasStation && hasFuel && fuelAmount > (fuelCost + contraption.weightCost) && heatShielding >= heatCost && oxygenSealed && !interplanetaryFlag && contraption.hasControls && contraption.dest != null) {
+
+		if (engines >= requiredJets && hasStation && hasFuel && fuelAmount >= contraption.requiredFuel() && heatShielding >= heatCost && oxygenSealed && !interplanetaryFlag && contraption.hasControls && contraption.dest != null) {
 		System.out.println(engines);
 		contraption.removeBlocksFromWorld(level, BlockPos.ZERO);
 		RocketContraptionEntity movedContraption =
@@ -253,7 +253,6 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 		AllSoundEvents.CONTRAPTION_ASSEMBLE.playOnServer(level, worldPosition);
 		movedContraption.destination = target;
 		movedContraption.home = this.level.dimension();
-		RocketHandler.ROCKETS.add(movedContraption);
 		System.out.println(level);
 		level.addFreshEntity(movedContraption);}else
 		{
@@ -277,7 +276,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 				contraption.owner.displayClientMessage(Component.literal
 				("Cockpit is not sealed, or too large!").withStyle(ChatFormatting.DARK_RED), false);
 			}
-			if(contraption.fuelAmount() < contraption.fuelCost) {
+			if(contraption.fuelAmount() < contraption.requiredFuel()) {
 				contraption.owner.displayClientMessage(Component.literal
 				("Insufficient fuel!").withStyle(ChatFormatting.DARK_RED), false);
 			}
@@ -305,61 +304,29 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 			exception(new AssemblyException(CreateLang.translateDirect("train_assembly.no_controls")), -1);
 		}
 	}
-	
-	
+
+
 	@Nullable
 	public GlobalStation getStation() {
 		return edgePoint.getEdgePoint();
 	}
-	
+
 	public boolean isAssembling() {
 		BlockState state = getBlockState();
 		return state.hasProperty(StationBlock.ASSEMBLING) && state.getValue(StationBlock.ASSEMBLING);
 	}
 	public int fuelCalc() {
-		String home = NorthstarPlanets.getPlanetName(this.level.dimension());
-		String targ = NorthstarPlanets.getPlanetName(target);
-		
-		int home_x = (int) NorthstarPlanets.getPlanetX(home);
-		int home_y = (int) NorthstarPlanets.getPlanetY(home);
-		
-		int targ_x = (int) NorthstarPlanets.getPlanetX(targ);
-		int targ_y = (int) NorthstarPlanets.getPlanetY(targ);
-		
-		int dif = (int) (Math.pow(home_x - targ_x, 2) + Math.pow(home_y - targ_y, 2));
-		dif = Mth.roundToward(dif, 100) / 20;
-		int cost = dif + NorthstarPlanets.getPlanetAtmosphereCost(this.level.dimension()) + 1000;
-		
-		if (dif != 0) {
-	//		System.out.println(dif);
-		}
-		return cost * 8;
-	}
+        return RocketContraption.flightCost(level.dimension(), target);
+    }
 
-	public int fuelReturnCalc() {
-		String home = NorthstarPlanets.getPlanetName(this.level.dimension());
-		String targ = NorthstarPlanets.getPlanetName(target);
-		
-		int home_x = (int) NorthstarPlanets.getPlanetX(home);
-		int home_y = (int) NorthstarPlanets.getPlanetY(home);
-		
-		int targ_x = (int) NorthstarPlanets.getPlanetX(targ);
-		int targ_y = (int) NorthstarPlanets.getPlanetY(targ);
-		
-		int dif = (int) (Math.pow(home_x - targ_x, 2) + Math.pow(home_y - targ_y, 2));
-		dif = Mth.roundToward(dif, 100) / 20;
-		int cost = dif + NorthstarPlanets.getPlanetAtmosphereCost(target) + 1000;
-		
-		if (dif != 0) {
-	//		System.out.println(dif);
-		}
-		return cost * 8;
-	}
-	
+    public int fuelReturnCalc() {
+        return RocketContraption.flightCost(target, level.dimension());
+    }
+
 	public int engineCalc() {
 		int homeAtmos = NorthstarPlanets.getPlanetAtmosphereCost(level.dimension()) / 100;
 		int targetAtmos = NorthstarPlanets.getPlanetAtmosphereCost(target) / 100;
-		
+
 		double grav = NorthstarPlanets.getGravMultiplier(target);
 		double homeGrav = NorthstarPlanets.getGravMultiplier(level.dimension());
 		if(grav < homeGrav) {
@@ -370,10 +337,10 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 		if(constant < homeConstant) {
 			constant = homeConstant;
 		}
-		
+
 		return (int) (Mth.clamp(((targetAtmos + homeAtmos) * grav), 6, 64)  + constant);
 	}
-	
+
 	// this is extremely buggy for some reason, this NEEDS to be fixed before release
 	//not sure what's making it so buggy but it saves really inconsistently despite sharing the code of the oxygen filler which works fine
 	@Override
@@ -392,19 +359,19 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 	    if (compound.contains("item", 10)) {
 		container.setItem(0, ItemStack.of(compound.getCompound("item")));}
 	}
-	
+
 	private void exception(AssemblyException exception, int carriage) {
 		failedCarriageIndex = carriage;
 		lastException = exception;
 		sendData();
 	}
-	
+
 	@Override
 	public <T> LazyOptional<T> getCapability(Capability<T> cap, Direction side) {
 		return super.getCapability(cap, side);
 	}
-	
-	
+
+
 	@SuppressWarnings("unused")
 	private boolean shouldAssemble() {
 		BlockState blockState = getBlockState();
@@ -416,7 +383,7 @@ public class RocketStationBlockEntity extends SmartBlockEntity implements IDispl
 	public AssemblyException getLastAssemblyException() {
 		return lastException;
 	}
-	
+
 	public Direction getAssemblyDirection() {
 		if (assemblyDirection != null)
 			return assemblyDirection;

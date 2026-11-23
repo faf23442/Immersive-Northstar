@@ -4,39 +4,24 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.UUID;
-
-import org.apache.commons.lang3.mutable.MutableInt;
 
 import com.lightning.northstar.Northstar;
 import com.lightning.northstar.NorthstarPackets;
 import com.lightning.northstar.block.tech.rocket_station.RocketStationBlockEntity;
-import com.lightning.northstar.world.dimension.NorthstarDimensions;
 import com.mojang.datafixers.util.Pair;
 
-import net.minecraft.advancements.CriteriaTriggers;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
-import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
-import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
-import net.minecraft.network.protocol.game.ClientboundUpdateMobEffectPacket;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.players.PlayerList;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.portal.PortalForcer;
 import net.minecraft.world.level.portal.PortalInfo;
-import net.minecraft.world.level.storage.LevelData;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod.EventBusSubscriber;
@@ -45,60 +30,48 @@ import net.minecraftforge.network.PacketDistributor;
 
 @EventBusSubscriber(modid = Northstar.MOD_ID, bus = Bus.FORGE)
 public class RocketHandler {
-	public static List<RocketContraptionEntity> ROCKETS = new ArrayList<>();
+    private static final TicketType<Integer> ROCKET_TICKET = TicketType.create("northstar_rocket", Integer::compareTo, 40);
+    private static final Map<RocketContraptionEntity, ChunkPos> LOADED_CHUNKS = new HashMap<>();
+	public static List<RocketContraptionEntity> ROCKETS = new java.util.concurrent.CopyOnWriteArrayList<>();
 	public static List<Pair<Level, BlockPos>> TICKET_QUEUE = new ArrayList<>();
 	public static HashMap<Pair<UUID, BlockPos>, Integer> CONTROL_QUEUE = new HashMap<Pair<UUID, BlockPos>, Integer>();
 	public static long eventTickNumber;
 	public static long eventTickNumberCheck;
-	private static UUID pilotID;
-	static int pp = 0;
-	
+
 	@SubscribeEvent
     public static void onWorldTick(TickEvent.LevelTickEvent event){
+		if (event.phase != TickEvent.Phase.END) return;
 		eventTickNumber = event.level.getGameTime();
-		
-		
-		// this is pretty much only clientside
-		if(!CONTROL_QUEUE.isEmpty() && eventTickNumber > eventTickNumberCheck) {
-			HashMap<Pair<UUID, BlockPos>, Integer> destroy = new HashMap<Pair<UUID,BlockPos>, Integer>();
-			for(Entry<Pair<UUID, BlockPos>, Integer> entries : CONTROL_QUEUE.entrySet()) {
-				if(entries.getKey().getFirst() != null)
-				{Player player = event.level.getPlayerByUUID(entries.getKey().getFirst());
-				if(player != null) {
-						RocketContraptionEntity rocket = ((RocketContraptionEntity)event.level.getEntity(entries.getValue()));
-						if(rocket != null) {
-							if(!rocket.getControllingPlayer().isEmpty()) {
-								if(rocket.getControllingPlayer().get() == player.getUUID()) {
-									destroy.put(entries.getKey(), entries.getValue());
-									continue;
-								}
-							}
-							
-							rocket.handlePlayerInteraction(player, entries.getKey().getSecond(), Direction.NORTH, InteractionHand.MAIN_HAND);
-							destroy.put(entries.getKey(), entries.getValue());
-						}
-					}
-				}
-			}
-			for(Entry<Pair<UUID, BlockPos>, Integer> entries : destroy.entrySet()) {
-				CONTROL_QUEUE.remove(entries.getKey(), entries.getValue());
-			}			
-		}
+
+
+        if (event.level.isClientSide) {
+            var pending = CONTROL_QUEUE.entrySet().iterator();
+            while (pending.hasNext()) {
+                var entry = pending.next();
+                Player player = event.level.getPlayerByUUID(entry.getKey().getFirst());
+                if (player != null && event.level.getEntity(entry.getValue()) instanceof RocketContraptionEntity rocket) {
+                    rocket.setControllingPlayer(player.getUUID());
+                    net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(net.minecraftforge.api.distmarker.Dist.CLIENT,
+                        () -> () -> com.lightning.northstar.block.tech.rocket_controls.RocketControlsHandler
+                            .startControlling(rocket, entry.getKey().getSecond()));
+                    pending.remove();
+                }
+            }
+        }
 		if(event.level.isClientSide)
 			return;
-		
-		if(ROCKETS.size() != 0) {
-			pp++;
-			for(int p = 0; p < ROCKETS.size(); p++) {
-				if( pp % 800 == 0) {
-				if(ROCKETS.get(p).level().dimension() != ROCKETS.get(p).destination && ROCKETS.get(p).getY() > 1750) {
-					changeDim(ROCKETS.get(p), event.level);
-					ROCKETS.remove(ROCKETS.get(p));
-				}
-				}
-			}
-		}
-		
+
+        for (RocketContraptionEntity rocket : List.copyOf(ROCKETS)) {
+            if (rocket.isRemoved()) {
+                ROCKETS.remove(rocket);
+                continue;
+            }
+            if (rocket.level() == event.level) keepLoaded(rocket);
+            if (rocket.level() == event.level && rocket.destination != null
+                && rocket.level().dimension() != rocket.destination && rocket.getY() > 1750)
+                transferRocket(rocket);
+        }
+
 		if(eventTickNumber > eventTickNumberCheck) {
 			//deleting contents of the queue
 			if(!TICKET_QUEUE.isEmpty()) {
@@ -116,185 +89,123 @@ public class RocketHandler {
 				}
 			}
 		}
-    	
+
     }
-	
+
 	public static void changeDim(RocketContraptionEntity entity, Level level) {
-		if (entity == null)
-			return;
-		entity.startLanding();
-		ResourceKey<Level> dest;
-		if(entity.destination == null) {
-			dest = NorthstarDimensions.MOON_DIM_KEY;
-		}else {dest = entity.destination;}
-		ServerLevel destLevel = entity.level().getServer().getLevel(dest);
-		HashMap<Entity,Integer> seatMap = new HashMap<Entity,Integer>();
-		UUID controller = null;
-		Map<Entity, MutableInt> colliders = new HashMap<Entity, MutableInt>();
-		for(Entity passengers : entity.entitiesInContraption) {
-			if(passengers.level().getServer().getLevel(passengers.level().dimension()) != destLevel && !passengers.level().isClientSide) {
-				if(passengers instanceof ServerPlayer) {
-					if(!entity.getControllingPlayer().isEmpty()) {
-						if(entity.getControllingPlayer().get() == passengers.getUUID())
-							pilotID = passengers.getUUID();
+        transferRocket(entity);
+    }
 
-					}
-					if(destLevel == null) {
-						destLevel = passengers.level().getServer().getLevel(passengers.level().dimension());
-					}
-					changePlayerDimension(destLevel, (ServerPlayer) passengers, new PortalForcer(destLevel), seatMap, entity.getContraption(), entity, controller);		
-					continue;
-				}
-				changeDimensionCustom(destLevel, passengers, new PortalForcer(destLevel), seatMap, colliders, entity.getContraption(), entity, controller);
-			}
-		}
-		changeDimensionCustom(destLevel, entity, new PortalForcer(destLevel), seatMap, colliders, entity.getContraption(), entity, controller);
-		eventTickNumberCheck = eventTickNumber + 70;
-		
-	}
-	
-	public static Entity changeDimensionCustom(ServerLevel pDestination, Entity entity, net.minecraftforge.common.util.ITeleporter teleporter,
-			HashMap<Entity,Integer> seatMap, Map<Entity, MutableInt> colliders,RocketContraption contrap, RocketContraptionEntity contrapEnt, UUID controller) {
-	      if (!net.minecraftforge.common.ForgeHooks.onTravelToDimension(entity, pDestination.dimension())) return null;
-	      if (entity.level() instanceof ServerLevel && !entity.isRemoved()) {
-	    	  entity.level().getProfiler().push("changeDimension");
-	    	  int seatNumber = -12345;
-	    	  if(contrap.getSeatOf(entity.getUUID()) != null) {
-	    		  Map<UUID, Integer> seatMapping = contrap.getSeatMapping();
-	    		  for (Map.Entry<UUID, Integer> entry : seatMapping.entrySet()) {
-	    			  if(entry.getKey() == entity.getUUID()) {
-	    				  seatNumber = entry.getValue();
-	    			  }
-	    		  }
-	    	  }	    	  
-	    	  entity.level().getProfiler().push("reposition");
+    /** Use Forge's normal entity/player transfer so packets, hooks and lifecycle stay intact. */
+    public static RocketContraptionEntity transferRocket(RocketContraptionEntity rocket) {
+        if (rocket == null || rocket.isRemoved() || !(rocket.level() instanceof ServerLevel source)
+            || rocket.destination == null || source.dimension() == rocket.destination) return null;
+        ServerLevel destination = source.getServer().getLevel(rocket.destination);
+        if (destination == null) return null;
 
-	    	  System.out.println(entity);
+        // A rocket can arrive without a player. Keep its destination entity-ticking while in flight.
+        ChunkPos targetChunk = new ChunkPos(rocket.blockPosition());
+        destination.getChunkSource().addRegionTicket(ROCKET_TICKET, targetChunk, 2, rocket.getId());
+        destination.getChunk(targetChunk.x, targetChunk.z);
 
-	    	  Entity transportedEntity = teleporter.placeEntity(entity, (ServerLevel) entity.level(), pDestination, entity.getYRot(), spawnPortal -> {
-	            	
-	            entity.level().getProfiler().popPush("reloading");
-	            Entity newentity = entity.getType().create(pDestination);
-	            System.out.println(newentity);
-	            System.out.println(entity.getType());
-	            
-	            if (newentity != null) {
-	            	newentity.restoreFrom(entity);
-	            	newentity.moveTo(entity.position().x, entity.position().y, entity.position().z, entity.getYRot(), entity.getXRot());
-	            	newentity.setDeltaMovement(entity.getDeltaMovement());
-	               pDestination.addDuringTeleport(newentity);
-	            }
-	            
-	            return newentity;
-	            });
-	    	  	if(entity instanceof RocketContraptionEntity rce) {
-	    	  		
-	    	  		for(Integer entint : seatMap.values()) {
-	    	  			for(Entity ents : seatMap.keySet()) {
-	    	  				if(seatMap.get(ents) == entint)
-	    	  				((RocketContraptionEntity)transportedEntity).addSittingPassenger(ents, entint);;
-	    	  			}
-	    	  		}
-	    	  		for(MutableInt entint : colliders.values()) {
-	    	  			for(Entity ents : colliders.keySet()) {
-	    	  				if(colliders.get(ents) == entint)
-	    	  				((RocketContraptionEntity)transportedEntity).registerColliding(ents);
-	    	  			}
-	    	  		}
-	    	  		if(controller == null) {
-	    	  			((RocketContraptionEntity)transportedEntity).setControllingPlayer(controller);
-	    	  		}
-	    	  		((RocketContraptionEntity)transportedEntity).owner = rce.owner;
-	    	  		((RocketContraptionEntity)transportedEntity).isUsingTicket = rce.isUsingTicket;
-	    	  		((RocketContraptionEntity)transportedEntity).visualEngineCount = rce.visualEngineCount;
-	    	  		((RocketContraptionEntity)transportedEntity).localControlsPos = rce.localControlsPos;
-	    	  		((RocketContraptionEntity)transportedEntity).setControllingPlayer(controller);
-	    	  		if(pilotID != null)
-					NorthstarPackets.getChannel().send(PacketDistributor.ALL.noArg(),
-							new RocketControlPacket(pilotID, ((RocketContraptionEntity)transportedEntity).getId(), rce.localControlsPos));
-	    	  		
-	    	  		
-	    	  	}
-	    	  	if(seatNumber != -12345 ) {
-	    	  		seatMap.put(transportedEntity, seatNumber);
-	    	  	}
-		    	if(contrapEnt.collidingEntities.containsKey(entity)) {
-		    		colliders.put(transportedEntity, contrapEnt.collidingEntities.get(entity));
-		    		// TRUCK NUTS!!!!!!
-		    	}
-	            
-	            entity.setRemoved(Entity.RemovalReason.CHANGED_DIMENSION);
-	            entity.level().getProfiler().pop();
-	            ((ServerLevel)entity.level()).resetEmptyTime();
-	            pDestination.resetEmptyTime();
-	            entity.level().getProfiler().pop();
-	            return transportedEntity;
-	      } else {
-	         return null;
-	      }
-	}
-	public static Entity changePlayerDimension(ServerLevel pDestination, ServerPlayer entity, net.minecraftforge.common.util.ITeleporter teleporter, HashMap<Entity,Integer> seatMap, RocketContraption contrap, RocketContraptionEntity contrapEnt, UUID controller) {
-	      if (!net.minecraftforge.common.ForgeHooks.onTravelToDimension(entity, pDestination.dimension())) return null;
-	      ((ServerPlayer) entity).isChangingDimension();
+        UUID controller = rocket.getControllingPlayer().orElse(null);
+        Map<UUID, Integer> seats = new HashMap<>(rocket.getContraption().getSeatMapping());
+        java.util.Set<Entity> passengers = new java.util.LinkedHashSet<>(rocket.getPassengers());
+        passengers.addAll(rocket.entitiesInContraption);
+        passengers.addAll(rocket.collidingEntities.keySet());
+        passengers.remove(rocket);
+        Map<Entity, net.minecraft.world.phys.Vec3> positions = new HashMap<>();
+        for (Entity passenger : passengers) positions.put(passenger, passenger.position());
 
-	      ServerLevel serverlevel = entity.serverLevel();
-	          LevelData leveldata = pDestination.getLevelData();
-	          entity.connection.send(new ClientboundRespawnPacket(pDestination.dimensionTypeId(), pDestination.dimension(), BiomeManager.obfuscateSeed(pDestination.getSeed()), entity.gameMode.getGameModeForPlayer(), entity.gameMode.getPreviousGameModeForPlayer(), pDestination.isDebug(), pDestination.isFlat(), (byte)3, entity.getLastDeathLocation(), entity.getPortalCooldown()));
-	          entity.connection.send(new ClientboundChangeDifficultyPacket(leveldata.getDifficulty(), leveldata.isDifficultyLocked()));
-	          PlayerList playerlist = entity.server.getPlayerList();
-	          int seatNumber = -12345;
-	    	  if(contrap.getSeatOf(entity.getUUID()) != null) {
-	    		  Map<UUID, Integer> seatMapping = contrap.getSeatMapping();
-	    		  for (Map.Entry<UUID, Integer> entry : seatMapping.entrySet()) {
-	    			  if(entry.getKey() == entity.getUUID()) {
-	    				  seatNumber = entry.getValue();
-	    			  }
-	    		  }
-	    	  }
-	    	  if(contrapEnt.hasControllingPassenger() && contrapEnt.getControllingPlayer() != null) {
-	    		  controller = contrapEnt.getControllingPlayer().get();
-	    	  }
-	          playerlist.sendPlayerPermissionLevel(entity);
-	          pDestination.removePlayerImmediately(entity, Entity.RemovalReason.CHANGED_DIMENSION);
-	          entity.revive();
-	          PortalInfo portalinfo = new PortalInfo(entity.position(), entity.getDeltaMovement(), entity.getYRot(), entity.getXRot());
-	             Entity e = teleporter.placeEntity(entity, serverlevel, pDestination, entity.getYRot(), spawnPortal -> {//Forge: Start vanilla logic
-	             serverlevel.getProfiler().push("moving");
-	             serverlevel.getProfiler().pop();
-	             serverlevel.getProfiler().push("placing");
-	             entity.setServerLevel(pDestination);
-	             pDestination.addDuringPortalTeleport(entity);
-	             entity.setXRot(portalinfo.xRot);
-	             entity.setYRot(portalinfo.yRot);
-	             entity.moveTo(portalinfo.pos.x, portalinfo.pos.y + 1, portalinfo.pos.z);
-	             serverlevel.getProfiler().pop();
-	             CriteriaTriggers.CHANGED_DIMENSION.trigger(entity, entity.level().dimension(), pDestination.dimension());
-	             return entity;//forge: this is part of the ITeleporter patch
-	             });//Forge: End vanilla logic
-	             if (e != entity) throw new java.lang.IllegalArgumentException(String.format(java.util.Locale.ENGLISH, "Teleporter %s returned not the player entity but instead %s, expected PlayerEntity %s", teleporter, e, entity));
-	             entity.connection.send(new ClientboundPlayerAbilitiesPacket(entity.getAbilities()));
-	             playerlist.sendLevelInfo(entity, pDestination);
-	             playerlist.sendAllPlayerInfo(entity);
+        Entity transferred = rocket.changeDimension(destination, atPosition(rocket.position()));
+        destination.getChunkSource().removeRegionTicket(ROCKET_TICKET, targetChunk, 2, rocket.getId());
+        if (!(transferred instanceof RocketContraptionEntity arrived)) return null;
+        keepLoaded(arrived);
+        arrived.startLanding();
+        arrived.getContraption().getSeatMapping().clear();
+        arrived.entitiesInContraption.clear();
+        for (Entity passenger : passengers) {
+            if (passenger.isRemoved() || passenger.level() != source) continue;
+            Entity moved = passenger.changeDimension(destination, atPosition(positions.get(passenger)));
+            if (moved == null) continue;
+            Integer seat = seats.get(passenger.getUUID());
+            if (seat != null && seat >= 0 && seat < arrived.getContraption().getSeats().size())
+                arrived.addSittingPassenger(moved, seat);
+            else arrived.registerColliding(moved);
+            arrived.entitiesInContraption.add(moved);
+            if (moved.getUUID().equals(arrived.ownerID) && moved instanceof Player player) arrived.owner = player;
+            if (moved.getUUID().equals(controller) && moved instanceof ServerPlayer player) {
+                arrived.setControllingPlayer(controller);
+                if (arrived.localControlsPos != null)
+                    NorthstarPackets.getChannel().send(PacketDistributor.PLAYER.with(() -> player),
+                        new RocketControlPacket(controller, arrived.getId(), arrived.localControlsPos));
+            }
+        }
+        return arrived;
+    }
 
-	             for(MobEffectInstance mobeffectinstance : entity.getActiveEffects()) {
-	                entity.connection.send(new ClientboundUpdateMobEffectPacket(entity.getId(), mobeffectinstance));
-	             
-	          }
-	          if(seatNumber != -12345 ) {
-	        	  seatMap.put(entity, seatNumber);
-			  }
-	          
-	             
-	          return entity;
-	       
-	}
-	
+    private static net.minecraftforge.common.util.ITeleporter atPosition(net.minecraft.world.phys.Vec3 position) {
+        return new net.minecraftforge.common.util.ITeleporter() {
+            @Override
+            public PortalInfo getPortalInfo(Entity entity, ServerLevel destination,
+                    java.util.function.Function<ServerLevel, PortalInfo> vanilla) {
+                return new PortalInfo(position, entity.getDeltaMovement(), entity.getYRot(), entity.getXRot());
+            }
+
+            @Override
+            public Entity placeEntity(Entity entity, ServerLevel source, ServerLevel destination, float yaw,
+                    java.util.function.Function<Boolean, Entity> reposition) {
+                return reposition.apply(false);
+            }
+
+            @Override
+            public boolean playTeleportSound(ServerPlayer player, ServerLevel source, ServerLevel destination) {
+                return false;
+            }
+        };
+    }
+
+    @SubscribeEvent
+    public static void onEntityJoin(net.minecraftforge.event.entity.EntityJoinLevelEvent event) {
+        if (event.getEntity() instanceof RocketContraptionEntity rocket && !ROCKETS.contains(rocket)) {
+            ROCKETS.add(rocket);
+            keepLoaded(rocket);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onEntityLeave(net.minecraftforge.event.entity.EntityLeaveLevelEvent event) {
+        if (event.getEntity() instanceof RocketContraptionEntity rocket) {
+            ROCKETS.remove(rocket);
+            ChunkPos chunk = LOADED_CHUNKS.remove(rocket);
+            if (chunk != null && rocket.level() instanceof ServerLevel level)
+                level.getChunkSource().removeRegionTicket(ROCKET_TICKET, chunk, 2, rocket.getId());
+        }
+    }
+
+    private static void keepLoaded(RocketContraptionEntity rocket) {
+        if (!(rocket.level() instanceof ServerLevel level)) return;
+        ChunkPos chunk = new ChunkPos(rocket.blockPosition());
+        ChunkPos previous = LOADED_CHUNKS.put(rocket, chunk);
+        if (previous != null && !previous.equals(chunk))
+            level.getChunkSource().removeRegionTicket(ROCKET_TICKET, previous, 2, rocket.getId());
+        level.getChunkSource().addRegionTicket(ROCKET_TICKET, chunk, 2, rocket.getId());
+    }
+
+    @SubscribeEvent
+    public static void onServerStopped(net.minecraftforge.event.server.ServerStoppedEvent event) {
+        ROCKETS.clear();
+        TICKET_QUEUE.clear();
+        CONTROL_QUEUE.clear();
+        LOADED_CHUNKS.clear();
+    }
+
 	public static void deleteTicket(Level level, BlockPos pos) {
 		TICKET_QUEUE.add(Pair.of(level, pos.above()));
 		eventTickNumberCheck = eventTickNumber + 3;
 	}
-	
-	
+
+
 	public static boolean isInRocket(Entity entity) {
 		for(RocketContraptionEntity rockets : ROCKETS) {
 			if(rockets.entitiesInContraption.contains(entity)) {
@@ -303,7 +214,7 @@ public class RocketHandler {
 		}
 		return false;
 	}
-	
+
 	public static void register() {
 		System.out.println("Handling rockets for " + Northstar.MOD_ID);
 	}

@@ -157,7 +157,7 @@ public class NorthstarTechBlocks {
 			.transform(axeOrPickaxe())
 			.blockstate(BlockStateGen.horizontalBlockProvider(true))
 			.onRegister(NorthstarStress.capacity(256.0))
-			.onRegister(BlockStressValues.setGeneratorSpeed(32, true))
+			.onRegister(BlockStressValues.setGeneratorSpeed(128, true))
 			.addLayer(() -> RenderType::cutoutMipped)
 			.simpleItem()
     		.register();

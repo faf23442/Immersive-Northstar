@@ -27,19 +27,23 @@ import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.Entity;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.StructureBlockInfo;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.fluids.IFluidTank;
+import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fluids.capability.IFluidHandler;
 import net.minecraftforge.fluids.capability.IFluidHandler.FluidAction;
 import net.minecraftforge.fluids.capability.templates.FluidTank;
@@ -94,21 +98,177 @@ public class RocketContraption extends TranslatingContraption{
 		
 		return true;
 	}
-	public void burnFuel() {		
-		IFluidHandler rocketFuels = storage.getFluids();
-		fuelCost = (int) ((int) weightCost + ((fuelCost - (fuelCost * computingPower))));
-		if(owner != null)
-		for (int slot = 0; slot < rocketFuels.getTanks(); slot++) {
-			if(NorthstarTags.NorthstarFluidTags.TIER_1_ROCKET_FUEL.matches(rocketFuels.getFluidInTank(slot).getFluid()) && rocketFuels.getFluidInTank(slot).getAmount() > fuelCost) 
-			{rocketFuels.drain(fuelCost, FluidAction.EXECUTE);
-			return;}
-			if(NorthstarTags.NorthstarFluidTags.TIER_2_ROCKET_FUEL.matches(rocketFuels.getFluidInTank(slot).getFluid()) && rocketFuels.getFluidInTank(slot).getAmount() > fuelCost) 
-			{rocketFuels.drain(Math.round(fuelCost / 2), FluidAction.EXECUTE);
-			return;}
-			if(NorthstarTags.NorthstarFluidTags.TIER_3_ROCKET_FUEL.matches(rocketFuels.getFluidInTank(slot).getFluid()) && rocketFuels.getFluidInTank(slot).getAmount() > fuelCost) 
-			{rocketFuels.drain(Math.round(fuelCost / 4), FluidAction.EXECUTE);
-			return;}
+	public int requiredFuel() {
+		return Math.max(0, (int) (weightCost + fuelCost * (1 - computingPower)));
+	}
+
+	public void burnFuel() {
+		tryBurnFuel();
+	}
+
+	/** Plan the complete withdrawal before touching cargo; water and oxygen are never fuel. */
+	public boolean tryBurnFuel() {
+		if (hasCreativeFuel()) return true;
+		IFluidHandler tanks = storage.getFluids();
+		long remaining = requiredFuel();
+		List<FluidStack> withdrawals = new ArrayList<>();
+		for (int slot = 0; slot < tanks.getTanks() && remaining > 0; slot++) {
+			FluidStack fluid = tanks.getFluidInTank(slot);
+			int tier = fuelValue(fluid);
+			if (tier == 0 || withdrawals.stream().anyMatch(fluid::isFluidEqual)) continue;
+			FluidStack request = fluid.copy();
+			request.setAmount((int) ((remaining + tier - 1) / tier));
+			FluidStack available = tanks.drain(request, FluidAction.SIMULATE);
+			if (available.isEmpty()) continue;
+			withdrawals.add(available);
+			remaining -= (long) available.getAmount() * tier;
 		}
+		if (remaining > 0) return false;
+		for (FluidStack withdrawal : withdrawals) tanks.drain(withdrawal, FluidAction.EXECUTE);
+		refreshFuel();
+		return true;
+	}
+
+	private static int fuelValue(FluidStack fluid) {
+		if (fluid.isEmpty()) return 0;
+		if (NorthstarTags.NorthstarFluidTags.TIER_3_ROCKET_FUEL.matches(fluid.getFluid())) return 4;
+		if (NorthstarTags.NorthstarFluidTags.TIER_2_ROCKET_FUEL.matches(fluid.getFluid())) return 2;
+		return NorthstarTags.NorthstarFluidTags.TIER_1_ROCKET_FUEL.matches(fluid.getFluid()) ? 1 : 0;
+	}
+
+	private void refreshFuel() {
+		if (hasCreativeFuel()) {
+			fuelAmount = Integer.MAX_VALUE;
+			has_fuel = true;
+			return;
+		}
+		long amount = 0;
+		IFluidHandler tanks = storage.getFluids();
+		for (int slot = 0; slot < tanks.getTanks(); slot++) {
+			FluidStack fluid = tanks.getFluidInTank(slot);
+			amount += (long) fluid.getAmount() * fuelValue(fluid);
+		}
+		fuelAmount = (int) Math.min(Integer.MAX_VALUE, amount);
+		has_fuel = fuelAmount > 0;
+	}
+
+	private boolean hasCreativeFuel() {
+		return storage.getFluids().storages.values().stream().anyMatch(tank ->
+			tank instanceof com.simibubi.create.content.fluids.tank.storage.creative.CreativeFluidTankMountedStorage
+				&& fuelValue(tank.getFluidInTank(0)) > 0);
+	}
+
+	@Override
+	public CompoundTag writeNBT(boolean spawnPacket) {
+		CompoundTag tag = super.writeNBT(spawnPacket);
+		CompoundTag rocket = new CompoundTag();
+		rocket.putString("Name", name);
+		rocket.putInt("FuelCost", fuelCost);
+		rocket.putInt("ReturnCost", fuelReturnCost);
+		rocket.putFloat("ComputingPower", computingPower);
+		rocket.putBoolean("UsingTicket", isUsingTicket);
+		rocket.putInt("FuelTicks", fuelTicks);
+		if (dest != null) rocket.putString("Destination", dest.location().toString());
+		tag.put("NorthstarRocket", rocket);
+		return tag;
+	}
+
+	@Override
+	public void readNBT(Level world, CompoundTag tag, boolean spawnData) {
+		super.readNBT(world, tag, spawnData);
+		migrateLegacyItems(spawnData);
+		// Old Northstar saves only contain Create's structure and cargo, so derive these again.
+		rocket_station = hasControls = hasInterplanetaryNavigation = false;
+		jet_engines = visual_jet_engines = blockCount = weightCost = heatShielding = 0;
+		computingPower = 0;
+		localControlsPos = null;
+		assembledJets.clear();
+		for (StructureBlockInfo info : blocks.values()) {
+			BlockState state = info.state();
+			if (!state.isAir()) {
+				blockCount++;
+				weightCost += state.is(NorthstarTags.NorthstarBlockTags.HEAVY_BLOCKS.tag) ? 5
+					: state.is(NorthstarTags.NorthstarBlockTags.SUPER_HEAVY_BLOCKS.tag) ? 10 : 1;
+			}
+			if (state.is(NorthstarTags.NorthstarBlockTags.TIER_1_HEAT_RESISTANCE.tag)) heatShielding += 3;
+			if (state.is(NorthstarTags.NorthstarBlockTags.TIER_2_HEAT_RESISTANCE.tag)) heatShielding += 8;
+			if (state.is(NorthstarTags.NorthstarBlockTags.TIER_3_HEAT_RESISTANCE.tag)) heatShielding += 20;
+			if (NorthstarTechBlocks.ROCKET_STATION.has(state)) rocket_station = true;
+			if (state.is(NorthstarBlocks.INTERPLANETARY_NAVIGATOR.get())) hasInterplanetaryNavigation = true;
+			if (NorthstarTechBlocks.ROCKET_CONTROLS.has(state)) {
+				hasControls = true;
+				if (localControlsPos == null) localControlsPos = info.pos();
+			}
+			if (NorthstarTechBlocks.JET_ENGINE.has(state)) {
+				jet_engines++;
+				if (state.getValue(JetEngineBlock.BOTTOM)) visual_jet_engines++;
+				assembledJets.add(info.pos());
+			}
+			if (NorthstarTechBlocks.COMPUTER_RACK.has(state) && info.nbt() != null) {
+				for (int slot = 1; slot <= 6; slot++) {
+					if (ItemStack.of(info.nbt().getCompound("slot" + slot)).is(NorthstarItems.TARGETING_COMPUTER.get()))
+						computingPower = Math.min(.4f, computingPower + .0025f);
+				}
+			}
+		}
+		refreshFuel();
+		if (tag.contains("NorthstarRocket")) {
+			CompoundTag rocket = tag.getCompound("NorthstarRocket");
+			name = rocket.getString("Name");
+			fuelCost = rocket.getInt("FuelCost");
+			fuelReturnCost = rocket.getInt("ReturnCost");
+			computingPower = rocket.getFloat("ComputingPower");
+			isUsingTicket = rocket.getBoolean("UsingTicket");
+			fuelTicks = rocket.getInt("FuelTicks");
+			dest = readDimension(rocket.getString("Destination"));
+		}
+	}
+
+	private void migrateLegacyItems(boolean spawnData) {
+		if (storage.getAllItemStorages().values().stream().noneMatch(item ->
+			item instanceof com.simibubi.create.impl.contraption.storage.FallbackMountedStorage)) return;
+		// Create's legacy reader uses FALLBACK even for chests. Its type check would
+		// otherwise skip unmounting these inventories when the rocket lands.
+		CompoundTag cargo = new CompoundTag();
+		storage.write(cargo, false);
+		boolean changed = false;
+		for (Tag entry : cargo.getList("items", Tag.TAG_COMPOUND)) {
+			CompoundTag item = (CompoundTag) entry;
+			BlockPos pos = NbtUtils.readBlockPos(item.getCompound("pos"));
+			var mounted = storage.getAllItemStorages().get(pos);
+			StructureBlockInfo block = blocks.get(pos);
+			if (!(mounted instanceof com.simibubi.create.impl.contraption.storage.FallbackMountedStorage) || block == null) continue;
+			var expected = com.simibubi.create.api.contraption.storage.item.MountedItemStorageType.REGISTRY.get(block.state().getBlock());
+			com.simibubi.create.api.contraption.storage.item.MountedItemStorage replacement;
+			if (expected == com.simibubi.create.AllMountedStorageTypes.CHEST.get())
+				replacement = new com.simibubi.create.api.contraption.storage.item.chest.ChestMountedStorage(mounted);
+			else if (expected == com.simibubi.create.AllMountedStorageTypes.SIMPLE.get())
+				replacement = new com.simibubi.create.api.contraption.storage.item.simple.SimpleMountedStorage(mounted);
+			else continue;
+			var encoded = com.simibubi.create.api.contraption.storage.item.MountedItemStorage.CODEC
+				.encodeStart(NbtOps.INSTANCE, replacement).result();
+			if (encoded.isPresent()) {
+				item.put("storage", encoded.get());
+				changed = true;
+			}
+		}
+		if (changed) storage.read(cargo, spawnData, this);
+	}
+
+	static ResourceKey<Level> readDimension(String value) {
+		ResourceKey<Level> legacy = NorthstarPlanets.getPlanetDimension(value);
+		if (legacy != null) return legacy;
+		ResourceLocation id = ResourceLocation.tryParse(value);
+		return id == null || value.isEmpty() ? null : ResourceKey.create(Registries.DIMENSION, id);
+	}
+
+	public static int flightCost(ResourceKey<Level> from, ResourceKey<Level> to) {
+		String home = NorthstarPlanets.getPlanetName(from);
+		String target = NorthstarPlanets.getPlanetName(to);
+		int dx = (int) NorthstarPlanets.getPlanetX(home) - (int) NorthstarPlanets.getPlanetX(target);
+		int dy = (int) NorthstarPlanets.getPlanetY(home) - (int) NorthstarPlanets.getPlanetY(target);
+		int distance = Mth.roundToward(dx * dx + dy * dy, 100) / 20;
+		return (distance + NorthstarPlanets.getPlanetAtmosphereCost(from) + 1000) * 8;
 	}
 	
 	@Override
@@ -224,21 +384,9 @@ public class RocketContraption extends TranslatingContraption{
 	}
 	
 	public void changeDim(ResourceKey<Level> targetDim, RocketContraptionEntity entity) {
-		entity.level().getProfiler().push("changeDimension");
-		ServerLevel serverlevel = (ServerLevel)entity.level();
-        MinecraftServer minecraftserver = serverlevel.getServer();
-        ServerLevel target = minecraftserver.getLevel(targetDim);
-        target.setChunkForced((int)entity.getX(), (int)entity.getZ(), true);
-		System.out.println(target.isLoaded(entity.blockPosition()));
-		for (Entity e : entity.getPassengers()) {
-			System.out.println(e);
-			e.changeDimension(target);
-		}
-		entity.changeDimension(target);
-		entity.getContraption().getContraptionWorld();
-		entity.level().getProfiler().pop();
-	}
-	
+        entity.destination = targetDim;
+        RocketHandler.transferRocket(entity);
+    }
 
 	@Override
 	public boolean canBeStabilized(Direction facing, BlockPos localPos) {

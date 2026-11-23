@@ -22,7 +22,9 @@ public class DimensionSpecialEffectsMixin {
     
 	@SuppressWarnings("resource")
 	@Inject(method = "getSunriseColor", at = @At("RETURN"), cancellable = true)
-    private float[] getSunriseColor(float Time, float tickDelta, CallbackInfoReturnable<float[]> info) {
+    private void northstar$getSunriseColor(float Time, float tickDelta, CallbackInfoReturnable<float[]> info) {
+		if (Minecraft.getInstance().level == null)
+			return;
 		ResourceKey<Level> player_dim = Minecraft.getInstance().level.dimension();
 		if (player_dim == NorthstarDimensions.MARS_DIM_KEY) {
 	      float f1 = Mth.cos(Time * ((float)Math.PI * 2F)) - 0.0F;
@@ -34,7 +36,8 @@ public class DimensionSpecialEffectsMixin {
 	         this.sunCol[1] = f3 * f3 * 0.2F + 0.5F;
 	         this.sunCol[2] = f3 * f3 * 0.8F + 0.5F;
 	         this.sunCol[3] = f4;
-	         return this.sunCol;
+	         info.setReturnValue(this.sunCol);
+	         return;
 	      }
 
 	   }
@@ -48,9 +51,11 @@ public class DimensionSpecialEffectsMixin {
 	         this.sunCol[1] = f3 * f3 * 0.7F + 0.4F;
 	         this.sunCol[2] = f3 * f3 * 0.0F + 0.2F;
 	         this.sunCol[3] = f4;
-	         return this.sunCol;
+	         info.setReturnValue(this.sunCol);
+	         return;
 	      } else {
-	         return null;
+	         info.setReturnValue(null);
+	         return;
 	      }
 	    }
 	    
@@ -64,12 +69,15 @@ public class DimensionSpecialEffectsMixin {
 	         this.sunCol[1] = f3 * f3 * 0.1F + 0.4F;
 	         this.sunCol[2] = f3 * f3 * 0.0F + 1.0F;
 	         this.sunCol[3] = f4;
-	         return this.sunCol;
+	         info.setReturnValue(this.sunCol);
+	         return;
 	      } else {
-	         return null;
+	         info.setReturnValue(null);
+	         return;
 	      }
 	    }
 	    else
-	    {return null;}
+	    {info.setReturnValue(null);
+	         return;}
 	}
 }

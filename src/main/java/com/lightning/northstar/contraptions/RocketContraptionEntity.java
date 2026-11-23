@@ -136,11 +136,7 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 		if (!(contraption instanceof RocketContraption))
 			return;
 		if(launchtime > 0 && activeLaunch) {launchtime--;}
-		if (level().isClientSide) {
-			clientOffsetDiff *= .75f;
-			updateClientMotion();
-		}
-		tickActors();
+		if (destination == null) destination = Level.OVERWORLD;
 		if(launchtime == 0 && activeLaunch)
 		{blasting = true;}
 		if(visualEngineCount == 0) {
@@ -206,11 +202,17 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 			//bruh :(
 			destination = Level.OVERWORLD;
 		}
-		if(((RocketContraption)this.contraption).fuelAmount() < ((RocketContraption)this.contraption).fuelCost && fuelBurned == false){
+		if(!level().isClientSide && contrap.fuelAmount() < contrap.requiredFuel() && !fuelBurned){
 			this.disassemble();
+			return;
 		}
-		if(!fuelBurned && this.getY() > this.level().getMaxBuildHeight() + 100)
-		{((RocketContraption)this.contraption).burnFuel(); fuelBurned = true;}
+		if(!level().isClientSide && !fuelBurned && this.getY() > this.level().getMaxBuildHeight() + 100) {
+			fuelBurned = contrap.tryBurnFuel();
+			if (!fuelBurned) {
+				disassemble();
+				return;
+			}
+		}
 		
 		if (soundTime % 40 == 0 && launchtime == 0 && blasting && !landing) 
 		{this.level().playLocalSound(this.getX(), this.getY() - 20, this.getZ(), NorthstarSounds.ROCKET_BLAST.get(), SoundSource.BLOCKS, 3, 0, false); i = 0;
@@ -252,13 +254,9 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 		//starting landing
 		if (this.getY() > 1750 && launched) {
 			if(this.level().isClientSide) {
-				flyingSound.stopSound();
+				stopAirSound();
 			}
-			this.cooldown = 0;
-			this.launched = false;
-			this.landing = true;
-			this.final_lift_vel = 0;
-			this.lift_vel = 0;
+			startLanding();
 		}
 
 		double prevAxisMotion = axisMotion;
@@ -286,13 +284,14 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 					if(this.landing && isUsingTicket) {
 						RocketHandler.deleteTicket(level(), this.blockPosition());
 					}
+					return;
 				}
 				if(Math.abs(final_lift_vel) > 3 && !hasExploded) {
 					level().explode(this, getX(), getY() - 1, getZ(), 30, NorthstarPlanets.getPlanetOxy(destination), Level.ExplosionInteraction.BLOCK);
 					hasExploded = true;
 				}
 			}else {
-				flyingSound.stopSound();
+				stopAirSound();
 			}
 		}
 		if (!isStalled() && tickCount > 2) {
@@ -310,15 +309,18 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 
 	@OnlyIn(Dist.CLIENT)
 	private RocketAirSound flyingSound;
+
+	@OnlyIn(Dist.CLIENT)
+	private void stopAirSound() {
+		if (flyingSound != null) flyingSound.stopSound();
+	}
 	
 	@SuppressWarnings("resource")
 	@OnlyIn(Dist.CLIENT)
 	private void tickAirSound(float maxVolume) {
 		if(level().isClientSide) {
 			float playerDist = (float) (20 / Math.abs(this.position().distanceTo(Minecraft.getInstance().cameraEntity.getPosition(0))));
-			System.out.println("playerDist: " + playerDist);
 			float finalVolume = Mth.clamp(playerDist * maxVolume, 0, maxVolume);
-			System.out.println("maxVolume: " + maxVolume);
 			float pitch = (float) Mth.clamp(getDeltaMovement()
 				.length(), .2f, 3f);
 			if (flyingSound == null || flyingSound.isStopped()) {
@@ -368,7 +370,9 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 	public void startLanding() {
 		this.launched = false;
 		this.landing = true;
+		this.cooldown = 0;
 		this.lift_vel = 0;
+		this.final_lift_vel = 0;
 	}
 	@Override
 	public Component getContraptionName() {
@@ -605,11 +609,16 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 		compound.putBoolean("fuelBurned", this.fuelBurned);
 		compound.putBoolean("printed", this.printed);
 		compound.putBoolean("activeLaunch", this.activeLaunch);
+		compound.putInt("LaunchTime", launchtime);
+		compound.putInt("LandingCooldown", cooldown);
+		compound.putBoolean("HasExploded", hasExploded);
 		
 		compound.putString("home", NorthstarPlanets.getPlanetName(home));
 		compound.putString("destination", NorthstarPlanets.getPlanetName(destination));
-		if(this.owner != null)
-		{compound.putUUID("player", this.owner.getUUID());}
+		if (home != null) compound.putString("HomeDimension", home.location().toString());
+		if (destination != null) compound.putString("DestinationDimension", destination.location().toString());
+		UUID savedOwner = owner != null ? owner.getUUID() : ownerID;
+		if (savedOwner != null) compound.putUUID("player", savedOwner);
 
 		compound.putInt("visualEngineCount", this.visualEngineCount);
 		
@@ -622,7 +631,7 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 		sequencedOffsetLimit =
 			compound.contains("SequencedOffsetLimit") ? compound.getDouble("SequencedOffsetLimit") : -1;
 		
-		this.blasting = compound.contains("blasting") ? compound.getBoolean("SequencedOffsetLimit") : false;
+		this.blasting = compound.getBoolean("blasting");
 		this.slowing = compound.contains("slowing") ? compound.getBoolean("slowing") : false;
 		this.isUsingTicket = compound.contains("isUsingTicket") ? compound.getBoolean("isUsingTicket") : false;
 		this.launched = compound.contains("launched") ? compound.getBoolean("launched") : false;
@@ -631,11 +640,24 @@ public class RocketContraptionEntity extends AbstractContraptionEntity implement
 		this.fuelBurned = compound.contains("fuelBurned") ? compound.getBoolean("fuelBurned") : false;
 		this.printed = compound.contains("printed") ? compound.getBoolean("printed") : false;
 		this.activeLaunch = compound.contains("activeLaunch") ? compound.getBoolean("activeLaunch") : false;
+		this.launchtime = Math.max(0, compound.getInt("LaunchTime"));
+		this.cooldown = Math.max(0, compound.getInt("LandingCooldown"));
+		this.hasExploded = compound.getBoolean("HasExploded");
 		
 		if(compound.contains("home")) {home = NorthstarPlanets.getPlanetDimension(compound.getString("home"));}
 		if(compound.contains("destination")) {destination = NorthstarPlanets.getPlanetDimension(compound.getString("destination"));}
+		if (compound.contains("HomeDimension")) home = RocketContraption.readDimension(compound.getString("HomeDimension"));
+		if (compound.contains("DestinationDimension")) destination = RocketContraption.readDimension(compound.getString("DestinationDimension"));
+		if (contraption instanceof RocketContraption rocket) {
+			localControlsPos = rocket.localControlsPos;
+			// Older versions never saved the flight costs, but did save both endpoints.
+			if (!compound.getCompound("Contraption").contains("NorthstarRocket") && home != null && destination != null) {
+				rocket.fuelCost = RocketContraption.flightCost(home, destination);
+				rocket.fuelReturnCost = RocketContraption.flightCost(destination, home);
+			}
+		}
 		
-		if(compound.contains("player")){this.ownerID = compound.getUUID("player");}
+		if(compound.hasUUID("player")){this.ownerID = compound.getUUID("player");}
 
 		if(compound.contains("visualEngineCount")){this.visualEngineCount = compound.getInt("visualEngineCount");}
 		if(compound.contains("lift_vel")){this.lift_vel = compound.getFloat("lift_vel");}

@@ -80,7 +80,7 @@ public class RocketControlsHandler {
 		displaytime++;
 		if(displaytime == 60 && player != null && entity != null && launchtime == -20 && !entity.blasting && !entity.landing && entity.launchtime == 0) {
 			if(!entity.getControllingPlayer().isEmpty()) {
-				if(entity.getControllingPlayer().get() == player.getUUID())
+				if(entity.getControllingPlayer().get().equals(player.getUUID()))
 					{player.displayClientMessage(
 							CreateLang.translateDirect("contraption.controls.rocket_tut").withStyle(ChatFormatting.AQUA), true);}
 			}
@@ -94,7 +94,7 @@ public class RocketControlsHandler {
 		if(player != null && entity != null) {
 			if(entity.landing && entity.getY() < entity.level().getMaxBuildHeight() + 500) 
 			{if(!entity.getControllingPlayer().isEmpty()) {
-				if(entity.getControllingPlayer().get() == player.getUUID())
+				if(entity.getControllingPlayer().get().equals(player.getUUID()))
 				{player.displayClientMessage(
 					CreateLang.translateDirect("contraption.controls.landing_warning").withStyle(ChatFormatting.RED), true);}
 			}
